@@ -30,11 +30,11 @@ style = "github-dark"
   weight = 1
   url = "https://github.com/Subcursion/"
 
-[taxonomies]
-  category = "categories"
-  series = "series"
-  tag = "tags"
-  author = "authors"
+# [taxonomies]
+#   category = "categories"
+#   series = "series"
+#   tag = "tags"
+#   author = "authors"
 
 [[menu.main]]
   name = "Journal"
