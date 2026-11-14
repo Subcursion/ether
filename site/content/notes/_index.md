@@ -1,0 +1,1 @@
+### Radom thoughts, work, and failures in the development process.
