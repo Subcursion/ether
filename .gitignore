@@ -53,3 +53,9 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# hugo stuff
+/build/
+/site/public/
+/site/resources/_gen/
+/site/.hugo_build.lock

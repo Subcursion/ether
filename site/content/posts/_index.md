@@ -1,0 +1,1 @@
+### A explicitley tailered list of entries that describ ehow I got form Point A to Point B.
