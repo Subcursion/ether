@@ -1,0 +1,2 @@
+[?] <1794711730> /home/subcursion/Projects/ether/ether/src/loggig.c:95 | ether_log > We are up and working
+-----
