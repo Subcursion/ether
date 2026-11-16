@@ -1,13 +1,21 @@
 
 #include "ether/logging.h"
+#include "ether/app.h"
+#include "ether/platform/window.h"
+#include "ether/rendering/vulkan_state.h"
+#include "ether/runtime/runtime_loop.h"
 
 #include <stdio.h>
 #include <unistd.h>
+
+ether_app_t application = {0};
 
 int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+
+    ether_rc rc = ETHER_SUCCESS;
 
     FILE *log_stream = fopen("./log.txt", "a+");
     if (NULL == log_stream)
@@ -18,7 +26,32 @@ int main(int argc, char **argv)
 
     ether_log_init(log_stream, ETHER_LOG_INFO);
 
-    ether_log(ETHER_LOG_INFO, "We are up and working");
+    if (ETHER_SUCCESS != (rc = ether_window_init(&application, "Ether Tracer", 800, 600)))
+    {
+        goto CLEANUP;
+    }
+
+    if (ETHER_SUCCESS != (rc = ether_vulkan_init(&application)))
+    {
+        goto CLEANUP;
+    }
+
+    if (ETHER_SUCCESS != (rc = ether_engine_loop(&application)))
+    {
+        goto CLEANUP;
+    }
+
+CLEANUP:
+    ETHER_ILOGV("Ether stopped with status: %s", ether_rc_str(rc));
+    if (ETHER_SUCCESS != (rc = ether_vulkan_destroy(&application)))
+    {
+        // nothing to do
+    }
+
+    if (ETHER_SUCCESS != (rc = ether_window_destroy(&application)))
+    {
+        // nothing to do
+    }
 
     return ether_log_close(log_stream);
 }
