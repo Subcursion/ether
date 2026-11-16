@@ -10,6 +10,8 @@ file(GLOB_RECURSE ETHER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
+add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
+
 add_executable(ether ${ETHER_SOURCES})
 
 set_target_properties(ether PROPERTIES
@@ -27,6 +29,20 @@ target_include_directories(ether
 )
 
 target_link_libraries(ether PRIVATE Vulkan::Vulkan SDL3::SDL3)
+
+# add cglm
+target_include_directories(ether SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/cglm/include"
+)
+
+target_compile_definitions(ether PRIVATE
+    CGLM_FORCE_DEPTH_ZERO_TO_ONE
+)
+
+# C math functions on Linux.
+if(UNIX AND NOT APPLE)
+    target_link_libraries(ether PRIVATE m)
+endif()
 
 if(MSVC)
     target_compile_options(ether PRIVATE /Wall /WX)
