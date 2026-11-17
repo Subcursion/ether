@@ -15,16 +15,13 @@
 ether_rc ether_generate_swapchain(ether_app_t *app)
 {
     ether_rc rc = ETHER_SUCCESS;
-    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
     VkResult result = VK_SUCCESS;
     VkSurfaceFormatKHR *surface_format = NULL;
     int sdl_width = 0;
     int sdl_height = 0;
     VkExtent2D size_extents = {0};
 
-    VkSwapchainKHR swapchain = NULL;
-    VkImage *_images = NULL;
-    VkImageView *_image_views = NULL;
+    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
 
     VkImageViewCreateInfo viewInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -131,8 +128,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
     }
 
     // pick image count
-    uint32_t image_count = 3;         // preferred
-    uint32_t created_image_count = 0; // actual
+    uint32_t image_count = 3; // preferred
 
     if (image_count < app->device.surface_capabilities.minImageCount)
     {
@@ -248,6 +244,12 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         rc = ETHER_ESDL_INIT;
         goto EXIT;
     }
+    if (sdl_width <= 0 || sdl_height <= 0)
+    {
+        // skip creation this time
+        rc = ETHER_DELAY;
+        goto EXIT;
+    }
     if (app->device.surface_capabilities.currentExtent.width != UINT32_MAX)
     {
         size_extents = app->device.surface_capabilities.currentExtent;
@@ -288,42 +290,44 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
 
         .oldSwapchain = VK_NULL_HANDLE};
 
-    if (VK_SUCCESS != (result = vkCreateSwapchainKHR(app->device.logical_device, &createInfo, NULL, &swapchain)))
+    if (VK_SUCCESS != (result = vkCreateSwapchainKHR(app->device.logical_device, &createInfo, NULL, &app->swapchain)))
     {
         ETHER_ELOGV("Failed to create swapchain: %s", string_VkResult(result));
         rc = ETHER_EVK_INIT;
         goto EXIT;
     }
-    app->swapchain = swapchain;
     ETHER_ILOG("Swapchain created");
 
     // get images and imageviews
     do
     {
-        if (NULL != _images)
+        if (NULL != app->images)
         {
-            free(_images);
-            _images = NULL;
+            free(app->images);
+            app->images = NULL;
         }
-        created_image_count = 0;
-        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, swapchain, &created_image_count, NULL)))
+        app->image_count = 0;
+        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, app->swapchain, &app->image_count, NULL)))
         {
             ETHER_ELOGV("Failed to get swapchain image count: %s", string_VkResult(result));
             rc = ETHER_EVK_INIT;
             goto EXIT;
         }
-        ETHER_ILOGV("Swapchain has %d images", created_image_count);
+        ETHER_ILOGV("Swapchain has %d images", app->image_count);
 
         // allocate the images and image views
-        _images = calloc(created_image_count, sizeof(VkImage));
-        if (NULL == _images)
+        app->images = calloc(app->image_count, sizeof(VkImage));
+        if (NULL == app->images)
         {
             ETHER_ELOGV("Failed to allocate image list: %s", strerror(errno));
             rc = errno;
             goto EXIT;
         }
 
-        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, swapchain, &created_image_count, _images)))
+        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device,
+                                                            app->swapchain,
+                                                            &app->image_count,
+                                                            app->images)))
         {
             if (VK_INCOMPLETE == result)
                 continue; // count changed
@@ -335,21 +339,21 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
     ETHER_ILOG("Image references retrieved");
 
     // now get image views for each one
-    ETHER_ILOGV("Creating %d ImageViews", created_image_count);
-    _image_views = calloc(created_image_count, sizeof(VkImageView));
-    if (NULL == _image_views)
+    ETHER_ILOGV("Creating %d ImageViews", app->image_count);
+    app->image_views = calloc(app->image_count, sizeof(VkImageView));
+    if (NULL == app->image_views)
     {
         ETHER_ELOGV("Failed to get image views for swapchain: %s", strerror(errno));
         rc = errno;
         goto EXIT;
     }
 
-    for (uint32_t i = 0; i < created_image_count; i++)
+    for (uint32_t i = 0; i < app->image_count; i++)
     {
-        viewInfo.image = _images[i];
+        viewInfo.image = app->images[i];
         viewInfo.format = surface_format->format;
 
-        if (VK_SUCCESS != (result = vkCreateImageView(app->device.logical_device, &viewInfo, NULL, _image_views + i)))
+        if (VK_SUCCESS != (result = vkCreateImageView(app->device.logical_device, &viewInfo, NULL, app->image_views + i)))
         {
             ETHER_ILOGV("Failed to create image view, index %d: %s", i, string_VkResult(result));
             rc = ETHER_EVK_INIT;
@@ -363,7 +367,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
 
     VkSemaphoreCreateInfo semaphoreInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    app->renders_finished = calloc(created_image_count, sizeof(VkSemaphore));
+    app->renders_finished = calloc(app->image_count, sizeof(VkSemaphore));
     if (NULL == app->renders_finished)
     {
         ETHER_ELOGV("Failed to allocate renders_finished list: %s", strerror(errno));
@@ -371,7 +375,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         goto EXIT;
     }
     // allocate the renders_finished for every image in swapchain
-    for (uint32_t i = 0; i < created_image_count; i++)
+    for (uint32_t i = 0; i < app->image_count; i++)
     {
         result = vkCreateSemaphore(app->device.logical_device, &semaphoreInfo, NULL, app->renders_finished + i);
         if (VK_SUCCESS != result)
@@ -382,27 +386,12 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         }
     }
 
-    // all good, assign to app
-    app->image_count = created_image_count;
-    app->images = _images;
-    app->image_views = _image_views;
-
     ETHER_ILOG("Swapchain initialized");
 
 EXIT:
     if (ETHER_SUCCESS != rc)
     {
         ether_swapchain_destroy(app);
-        if (NULL != _images)
-        {
-            free(_images);
-            _images = NULL;
-        }
-        if (NULL != _image_views)
-        {
-            free(_image_views);
-            _image_views = NULL;
-        }
     }
     return rc;
 }
@@ -416,6 +405,8 @@ void ether_swapchain_destroy(ether_app_t *app)
         ETHER_ILOG("Destroying render finished semaphore list");
         for (uint32_t i = 0; i < app->image_count; i++)
         {
+            if (VK_NULL_HANDLE == app->renders_finished[i])
+                continue;
             vkDestroySemaphore(app->device.logical_device, app->renders_finished[i], NULL);
         }
         free(app->renders_finished);
@@ -427,6 +418,8 @@ void ether_swapchain_destroy(ether_app_t *app)
         ETHER_ILOG("Destroying image views");
         for (uint32_t i = 0; i < app->image_count; i++)
         {
+            if (VK_NULL_HANDLE == app->image_views[i])
+                continue;
             vkDestroyImageView(app->device.logical_device, app->image_views[i], NULL);
         }
         free(app->image_views);

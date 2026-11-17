@@ -26,10 +26,19 @@ subcursion@sublegion in repo: ether/site on  main (718ff84) +12/- [x!+?]
 lrwxrwxrwx - subcursion 14 Nov 15:04 /home/subcursion/.local/bin/sass -> /home/subcursion/Programs/sass/sass
 ```
 
-# What wrong wrong
-Which works but I still get warnings from Hugo
+# Selecting the Sass compiler
+
+Installing Dart Sass did not initially stop Hugo from warning about LibSass. The theme was still using the default transpiler in its `toCSS` calls.
+
+The fix was to override the theme’s style partials locally under `site/layouts/_partials/head/` and explicitly select Dart Sass:
+
+```go-html-template
+{{ $cssOpts := dict "transpiler" "dartsass" "targetPath" "css/coder.css" }}
+{{ $styles := resources.Get "scss/coder.scss" | css.Sass $cssOpts }}
 ```
-WARN  deprecated: css.Sass: libsass was deprecated in Hugo v0.153.0 and will be removed in a future release. Use dartsass instead. See https://gohugo.io/functions/css/sass/#dart-sass
-```
+
+The actual overrides preserve template execution, source maps, minification, and fingerprints where the original theme uses them. Theme, dark, RTL, and custom SCSS paths select the same compiler. The theme submodule remains unchanged.
+
+The useful distinction: installing a compiler and configuring the build to use it are separate steps. The LibSass warning is resolved. Dart Sass also reports deprecations in the theme’s existing Sass syntax; these originate from the stylesheets, not from selecting the wrong compiler.
 
 Otherwise, install a theme via git submodule (I used Coder) worked great and the server updated immediately with my new content.

@@ -410,21 +410,22 @@ void ether_render_destroy(ether_app_t *app)
     PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), return);
     VkResult result = VK_SUCCESS;
 
-    // wait on the in flight for rendering
-    if (VK_NULL_HANDLE != app->in_flight)
-    {
-        ETHER_ILOG("Waiting for in flight fence");
-        result = vkWaitForFences(app->device.logical_device, 1, &app->in_flight, VK_TRUE, UINT64_MAX);
-        if (VK_SUCCESS != result)
-        {
-            ETHER_ELOGV("Failed to wait for in flight fence: %s", string_VkResult(result));
-        }
-        // don't bother resetting it, it's about to be destroyed, also don't quit on error
-    }
-
     // and wait for present to be done
     if (app->present_pending)
     {
+        // if a present was pending then in flight is also triggered
+        // wait on the in flight for rendering
+        if (VK_NULL_HANDLE != app->in_flight)
+        {
+            ETHER_ILOG("Waiting for in flight fence");
+            result = vkWaitForFences(app->device.logical_device, 1, &app->in_flight, VK_TRUE, UINT64_MAX);
+            if (VK_SUCCESS != result)
+            {
+                ETHER_ELOGV("Failed to wait for in flight fence: %s", string_VkResult(result));
+            }
+            // don't bother resetting it, it's about to be destroyed, also don't quit on error
+        }
+
         // if we are rendering normally and present_pending was triggered, wait on it and reset it
         // so it can be used below
         ETHER_ILOG("Waiting for present fence");

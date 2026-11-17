@@ -37,26 +37,28 @@ ether_rc ether_log_init(FILE *stream, ether_log_level_e min_level)
         }
     }
 
-    pthread_mutex_lock(&ether_log_lock);
+    // enable line buffering mode
+    if (setvbuf(stream, NULL, _IOLBF, 0) != 0)
+    {
+        fprintf(stderr, "Failed to configure log buffering\n");
+        fclose(stream);
+        return ETHER_INIT;
+    }
 
     ether_log_stream = stream;
     ether_min_log_level = min_level;
     _log_init = true;
 
-    pthread_mutex_unlock(&ether_log_lock);
-
     return rc;
 }
 
-ether_rc ether_log_close(FILE *stream)
+ether_rc ether_log_close(void)
 {
     ether_rc rc = ETHER_SUCCESS;
-    PARAM_CHECK(NULL != stream, rc = ETHER_EPARAM, return rc);
+    PARAM_CHECK(NULL != ether_log_stream, rc = ETHER_EPARAM, return rc);
 
-    pthread_mutex_lock(&ether_log_lock);
     fprintf(ether_log_stream, "%s\n", "-----");
     _log_init = false;
-    pthread_mutex_unlock(&ether_log_lock);
 
-    return fclose(stream);
+    return fclose(ether_log_stream);
 }

@@ -1,6 +1,6 @@
-[submodule "site/themes/Coder"]
-	path = site/themes/Coder
-	url = https://github.com/luizdepra/hugo-coder.git
 [submodule "ether/vendor/cglm"]
 	path = ether/vendor/cglm
 	url = https://github.com/recp/cglm.git
+[submodule "site/themes/terminal"]
+	path = site/themes/terminal
+	url = https://github.com/panr/hugo-theme-terminal.git
