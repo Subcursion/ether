@@ -30,7 +30,7 @@ static const char *get_device_type_str(VkPhysicalDeviceType type)
     }
 }
 
-static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, ether_device_t *ether_device)
+static void get_device_compatibility(ether_app_t *app, VkPhysicalDevice device, ether_device_t *ether_device)
 {
     PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), return);
     PARAM_CHECK(VK_NULL_HANDLE != device, ETHER_ELOG("device null"), return);
@@ -83,6 +83,26 @@ static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, 
     {
         _score = 0;
         goto EXIT;
+    }
+
+    switch (properties.deviceType)
+    {
+    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+        _score += 500;
+        break;
+    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+        _score += 100;
+        break;
+    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+        _score += 200;
+        break;
+    case VK_PHYSICAL_DEVICE_TYPE_CPU:
+        _score += 50;
+        break;
+    case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+    case VK_PHYSICAL_DEVICE_TYPE_MAX_ENUM:
+    default:
+        break;
     }
 
     VkFormatProperties format_properties;
@@ -150,26 +170,6 @@ static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, 
 
     vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, families);
 
-    switch (properties.deviceType)
-    {
-    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-        _score += 500;
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-        _score += 100;
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-        _score += 200;
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_CPU:
-        _score += 50;
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_OTHER:
-    case VK_PHYSICAL_DEVICE_TYPE_MAX_ENUM:
-    default:
-        break;
-    }
-
     for (uint32_t fi = 0; fi < familyCount; fi++)
     {
         family = &families[fi];
@@ -224,27 +224,38 @@ static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, 
     }
 
     // now check for extensions
-    if (VK_SUCCESS != (result = vkEnumerateDeviceExtensionProperties(device, NULL, &extension_count, NULL)))
+    do
     {
-        fprintf(ether_log_stream, "!!! Failed to get extension count: %s !!!\n", string_VkResult(result));
-        _score = 0; // disable the GPU
-        goto EXIT;
-    }
+        if (NULL != extensions)
+        {
+            free(extensions);
+            extensions = NULL;
+        }
+        extension_count = 0;
+        if (VK_SUCCESS != (result = vkEnumerateDeviceExtensionProperties(device, NULL, &extension_count, NULL)))
+        {
+            fprintf(ether_log_stream, "!!! Failed to get extension count: %s !!!\n", string_VkResult(result));
+            _score = 0; // disable the GPU
+            goto EXIT;
+        }
 
-    extensions = malloc(sizeof(VkExtensionProperties) * extension_count);
-    if (NULL == extensions)
-    {
-        fprintf(ether_log_stream, "!!! Failed to allocate extension property list: %s !!!", strerror(errno));
-        _score = 0; // disable the GPU
-        goto EXIT;
-    }
+        extensions = malloc(sizeof(VkExtensionProperties) * extension_count);
+        if (NULL == extensions)
+        {
+            fprintf(ether_log_stream, "!!! Failed to allocate extension property list: %s !!!", strerror(errno));
+            _score = 0; // disable the GPU
+            goto EXIT;
+        }
 
-    if (VK_SUCCESS != (result = vkEnumerateDeviceExtensionProperties(device, NULL, &extension_count, extensions)))
-    {
-        fprintf(ether_log_stream, "!!! Failed to get extension properties: %s !!!\n", string_VkResult(result));
-        _score = 0; // disable the GPU
-        goto EXIT;
-    }
+        if (VK_SUCCESS != (result = vkEnumerateDeviceExtensionProperties(device, NULL, &extension_count, extensions)))
+        {
+            if (VK_INCOMPLETE == result)
+                continue; // count changed
+            fprintf(ether_log_stream, "!!! Failed to get extension properties: %s !!!\n", string_VkResult(result));
+            _score = 0; // disable the GPU
+            goto EXIT;
+        }
+    } while (VK_INCOMPLETE == result);
 
     // check for the VK_KHR_SWAPCHAIN_EXTENSION_NAME
     for (uint32_t ei = 0; ei < extension_count; ei++)
@@ -301,31 +312,42 @@ static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, 
     }
 
     // and formats
-    if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(device, &surfaceInfo, &ether_device->surface_format_count, NULL)))
+    do
     {
-        fprintf(ether_log_stream, "!!! Failed to get physical device surface format count: %s !!!\n", string_VkResult(result));
-        _score = 0;
-        goto EXIT;
-    }
-    ether_device->surface_formats = malloc(sizeof(VkSurfaceFormat2KHR) * ether_device->surface_format_count);
-    if (NULL == ether_device->surface_formats)
-    {
-        fprintf(ether_log_stream, "!!! Failed to allocate surface format list: %s\n", strerror(errno));
-        _score = 0;
-        goto EXIT;
-    }
-    // The caller initializes the header of every extensible output structure.
-    for (uint32_t si = 0; si < ether_device->surface_format_count; si++)
-    {
-        ether_device->surface_formats[si] = (VkSurfaceFormat2KHR){
-            .sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR};
-    }
-    if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(device, &surfaceInfo, &ether_device->surface_format_count, ether_device->surface_formats)))
-    {
-        fprintf(ether_log_stream, "!!! Failed to get physical device surface formats: %s !!!\n", string_VkResult(result));
-        _score = 0;
-        goto EXIT;
-    }
+        if (NULL != ether_device->surface_formats)
+        {
+            free(ether_device->surface_formats);
+            ether_device->surface_formats = NULL;
+        }
+        ether_device->surface_format_count = 0;
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(device, &surfaceInfo, &ether_device->surface_format_count, NULL)))
+        {
+            fprintf(ether_log_stream, "!!! Failed to get physical device surface format count: %s !!!\n", string_VkResult(result));
+            _score = 0;
+            goto EXIT;
+        }
+        ether_device->surface_formats = malloc(sizeof(VkSurfaceFormat2KHR) * ether_device->surface_format_count);
+        if (NULL == ether_device->surface_formats)
+        {
+            fprintf(ether_log_stream, "!!! Failed to allocate surface format list: %s\n", strerror(errno));
+            _score = 0;
+            goto EXIT;
+        }
+        // The caller initializes the header of every extensible output structure.
+        for (uint32_t si = 0; si < ether_device->surface_format_count; si++)
+        {
+            ether_device->surface_formats[si] = (VkSurfaceFormat2KHR){
+                .sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR};
+        }
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(device, &surfaceInfo, &ether_device->surface_format_count, ether_device->surface_formats)))
+        {
+            if (VK_INCOMPLETE == result)
+                continue; // count changed
+            fprintf(ether_log_stream, "!!! Failed to get physical device surface formats: %s !!!\n", string_VkResult(result));
+            _score = 0;
+            goto EXIT;
+        }
+    } while (VK_INCOMPLETE == result);
 
     fprintf(ether_log_stream, "\tSurface Formats [%d]:\n", ether_device->surface_format_count);
     for (uint32_t si = 0; si < ether_device->surface_format_count; si++)
@@ -367,25 +389,37 @@ static void get_device_compatability(ether_app_t *app, VkPhysicalDevice device, 
     }
 
     // then present modes
-    if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, app->vk_surface, &ether_device->surface_present_mode_count, NULL)))
+    do
     {
-        fprintf(ether_log_stream, "!!! Failed to get physical device surface present mode count: %s !!!\n", string_VkResult(result));
-        _score = 0;
-        goto EXIT;
-    }
-    ether_device->surface_present_modes = malloc(sizeof(VkPresentModeKHR) * ether_device->surface_present_mode_count);
-    if (NULL == ether_device->surface_present_modes)
-    {
-        fprintf(ether_log_stream, "!!! Failed to allocate surface present mode list: %s\n", strerror(errno));
-        _score = 0;
-        goto EXIT;
-    }
-    if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, app->vk_surface, &ether_device->surface_present_mode_count, ether_device->surface_present_modes)))
-    {
-        fprintf(ether_log_stream, "!!! Failed to get physical device surface present modes: %s !!!\n", string_VkResult(result));
-        _score = 0;
-        goto EXIT;
-    }
+        if (NULL != ether_device->surface_present_modes)
+        {
+            free(ether_device->surface_present_modes);
+            ether_device->surface_present_modes = NULL;
+        }
+        ether_device->surface_present_mode_count = 0;
+
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, app->vk_surface, &ether_device->surface_present_mode_count, NULL)))
+        {
+            fprintf(ether_log_stream, "!!! Failed to get physical device surface present mode count: %s !!!\n", string_VkResult(result));
+            _score = 0;
+            goto EXIT;
+        }
+        ether_device->surface_present_modes = malloc(sizeof(VkPresentModeKHR) * ether_device->surface_present_mode_count);
+        if (NULL == ether_device->surface_present_modes)
+        {
+            fprintf(ether_log_stream, "!!! Failed to allocate surface present mode list: %s\n", strerror(errno));
+            _score = 0;
+            goto EXIT;
+        }
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, app->vk_surface, &ether_device->surface_present_mode_count, ether_device->surface_present_modes)))
+        {
+            if (VK_INCOMPLETE == result)
+                continue; // count changed
+            fprintf(ether_log_stream, "!!! Failed to get physical device surface present modes: %s !!!\n", string_VkResult(result));
+            _score = 0;
+            goto EXIT;
+        }
+    } while (VK_INCOMPLETE == result);
 
     fprintf(ether_log_stream, "\tPresent Modes [%d]:\n", ether_device->surface_present_mode_count);
     for (uint32_t pmi = 0; pmi < ether_device->surface_present_mode_count; pmi++)
@@ -459,49 +493,66 @@ ether_rc ether_pick_device(ether_app_t *app, ether_device_t *device)
 
     float queuePriorities[2] = {1.0f, 1.0f}; // 1.0 max allowed
 
-    if (VK_SUCCESS != (vk_result = vkEnumeratePhysicalDevices(app->vk_instance, &deviceCount, NULL)))
+    do
     {
-        ETHER_ELOGV("Failed to enumerate physical devices: %s", string_VkResult(vk_result));
-        rc = ETHER_EVK_INIT;
-        goto EXIT;
-    }
+        if (NULL != devices)
+        {
+            free(devices);
+            devices = NULL;
+        }
+        if (NULL != ether_devices)
+        {
+            free(ether_devices);
+            ether_devices = NULL;
+        }
+        deviceCount = 0;
 
-    ETHER_ILOGV("Found %d physical devices", deviceCount);
-    if (0 == deviceCount)
-    {
-        ETHER_ELOG("No GPU devices to use.");
-        rc = ETHER_EVK_INIT;
-        goto EXIT;
-    }
+        if (VK_SUCCESS != (vk_result = vkEnumeratePhysicalDevices(app->vk_instance, &deviceCount, NULL)))
+        {
+            ETHER_ELOGV("Failed to enumerate physical devices: %s", string_VkResult(vk_result));
+            rc = ETHER_EVK_INIT;
+            goto EXIT;
+        }
 
-    devices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
-    if (NULL == devices)
-    {
-        ETHER_ELOGV("Physical Device list allocation failed: %s", strerror(errno));
-        rc = errno;
-        goto EXIT;
-    }
-    ether_devices = calloc(deviceCount, sizeof(ether_device_t));
-    if (NULL == ether_devices)
-    {
-        ETHER_ELOGV("Ether Device list allocation failed: %s", strerror(errno));
-        rc = errno;
-        goto EXIT;
-    }
+        ETHER_ILOGV("Found %d physical devices", deviceCount);
+        if (0 == deviceCount)
+        {
+            ETHER_ELOG("No GPU devices to use.");
+            rc = ETHER_EVK_INIT;
+            goto EXIT;
+        }
 
-    ETHER_ILOG("Enumerating devices for compatability...");
+        devices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
+        if (NULL == devices)
+        {
+            ETHER_ELOGV("Physical Device list allocation failed: %s", strerror(errno));
+            rc = errno;
+            goto EXIT;
+        }
+        ether_devices = calloc(deviceCount, sizeof(ether_device_t));
+        if (NULL == ether_devices)
+        {
+            ETHER_ELOGV("Ether Device list allocation failed: %s", strerror(errno));
+            rc = errno;
+            goto EXIT;
+        }
 
-    if (VK_SUCCESS != vkEnumeratePhysicalDevices(app->vk_instance, &deviceCount, devices))
-    {
-        ETHER_ELOGV("Failed to enumerate physical devices: %s", string_VkResult(vk_result));
-        rc = ETHER_EVK_INIT;
-        goto EXIT;
-    }
+        ETHER_ILOG("Enumerating devices for compatability...");
+
+        if (VK_SUCCESS != (vk_result = vkEnumeratePhysicalDevices(app->vk_instance, &deviceCount, devices)))
+        {
+            if (VK_INCOMPLETE == vk_result)
+                continue; // count changed
+            ETHER_ELOGV("Failed to enumerate physical devices: %s", string_VkResult(vk_result));
+            rc = ETHER_EVK_INIT;
+            goto EXIT;
+        }
+    } while (VK_INCOMPLETE == vk_result);
 
     uint32_t di = 0;
     for (; di < deviceCount; di++)
     {
-        get_device_compatability(app, devices[di], ether_devices + di);
+        get_device_compatibility(app, devices[di], ether_devices + di);
     }
 
     // assign it to the application
@@ -526,7 +577,7 @@ ether_rc ether_pick_device(ether_app_t *app, ether_device_t *device)
     ETHER_ILOGV("Graphics Family: %d", best_device->graphics_family);
     ETHER_ILOGV("Present Family: %d", best_device->present_family);
 
-    // create the logicl device and queues
+    // create the logical device and queues
     bool separateFamilies = best_device->graphics_family != best_device->present_family;
     VkDeviceQueueCreateInfo queueInfo[2] = {{.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
                                              .queueFamilyIndex = best_device->graphics_family,
@@ -587,7 +638,7 @@ EXIT:
 
 void ether_device_destroy(ether_app_t *app)
 {
-    PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), goto EXIT);
+    PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), return);
 
     // remove the surface_formats and surface_present_modes
     if (NULL != app->device.surface_formats)
@@ -606,6 +657,4 @@ void ether_device_destroy(ether_app_t *app)
         ETHER_ILOG("Destroying logical device");
         vkDestroyDevice(app->device.logical_device, NULL);
     }
-EXIT:
-    return;
 }

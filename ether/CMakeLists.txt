@@ -10,7 +10,7 @@ file(GLOB_RECURSE ETHER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
-add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
+add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}/=")
 
 add_executable(ether ${ETHER_SOURCES})
 

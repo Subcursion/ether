@@ -43,15 +43,9 @@ int main(int argc, char **argv)
 
 CLEANUP:
     ETHER_ILOGV("Ether stopped with status: %s", ether_rc_str(rc));
-    if (ETHER_SUCCESS != (rc = ether_vulkan_destroy(&application)))
-    {
-        // nothing to do
-    }
 
-    if (ETHER_SUCCESS != (rc = ether_window_destroy(&application)))
-    {
-        // nothing to do
-    }
+    ether_vulkan_destroy(&application);
+    ether_window_destroy(&application);
 
     return ether_log_close(log_stream);
 }

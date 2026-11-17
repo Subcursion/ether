@@ -104,7 +104,7 @@ ether_rc ether_vulkan_init(ether_app_t *app)
 
     memcpy(&app->device, &device, sizeof(device));
 
-    // init swapcahin
+    // init swapchain
     rc = ether_generate_swapchain(app);
     if (ETHER_SUCCESS != rc)
     {

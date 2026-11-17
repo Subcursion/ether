@@ -6,6 +6,6 @@
 
 ether_rc ether_window_init(ether_app_t *app, const char *window_title, int width, int height);
 
-ether_rc ether_window_destroy(ether_app_t *app);
+void ether_window_destroy(ether_app_t *app);
 
 #endif
