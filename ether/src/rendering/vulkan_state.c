@@ -17,6 +17,17 @@
 ether_rc ether_vulkan_init(ether_app_t *app)
 {
     ether_rc rc = ETHER_SUCCESS;
+    const char **extensions = NULL;
+    uint32_t extensionCount = 0;
+    const char *const *sdl_extensions = NULL;
+
+#ifndef NDEBUG
+    const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
+    uint32_t layer_count = 1;
+#else
+    const char *const *layers = NULL;
+    uint32_t layer_count = 0;
+#endif
 
     PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
 
@@ -25,9 +36,7 @@ ether_rc ether_vulkan_init(ether_app_t *app)
     app->vk_instance = VK_NULL_HANDLE;
     app->vk_surface = VK_NULL_HANDLE;
 
-    uint32_t extensionCount = 0;
-
-    const char *const *sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
+    sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
     if (NULL == sdl_extensions)
     {
         ETHER_ELOGV("Failed to get SDL Vulkan extensions: %s", SDL_GetError());
@@ -35,7 +44,7 @@ ether_rc ether_vulkan_init(ether_app_t *app)
         goto EXIT;
     }
     // need to copy to our own version of extensions to enable VK_KHR_get_surface_capabilities2
-    const char **extensions = malloc(sizeof(char *) * (extensionCount + 1));
+    extensions = malloc(sizeof(char *) * (extensionCount + 2));
     if (NULL == extensions)
     {
         ETHER_ELOGV("Failed to allocate extension list for instance creation: %s", strerror(errno));
@@ -43,17 +52,8 @@ ether_rc ether_vulkan_init(ether_app_t *app)
         goto EXIT;
     }
     memcpy(extensions, sdl_extensions, extensionCount * sizeof(char *));
-    extensions[extensionCount] = VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME;
-
-    const char *layers[] = {
-#ifndef NODEBUG
-        "VK_LAYER_KHRONOS_validation"
-#endif
-    };
-    uint32_t layer_count = 0;
-#ifndef NODEBUG
-    layer_count = 1;
-#endif
+    extensions[extensionCount++] = VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME;
+    extensions[extensionCount++] = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
 
     VkApplicationInfo appInfo = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -66,7 +66,7 @@ ether_rc ether_vulkan_init(ether_app_t *app)
     VkInstanceCreateInfo createInfo = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &appInfo,
-        .enabledExtensionCount = extensionCount + 1,
+        .enabledExtensionCount = extensionCount,
         .ppEnabledExtensionNames = extensions,
         .enabledLayerCount = layer_count,
         .ppEnabledLayerNames = layers};
@@ -104,12 +104,8 @@ ether_rc ether_vulkan_init(ether_app_t *app)
 
     memcpy(&app->device, &device, sizeof(device));
 
-    // init swapcahin
-    rc = ether_generate_swapchain(app);
-    if (ETHER_SUCCESS != rc)
-    {
-        goto EXIT;
-    }
+    // so they get created on start
+    app->pending_swapchain_rebuild = true;
 
     // init renderer
     rc = ether_render_init(app);

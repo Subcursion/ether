@@ -15,16 +15,13 @@
 ether_rc ether_generate_swapchain(ether_app_t *app)
 {
     ether_rc rc = ETHER_SUCCESS;
-    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
     VkResult result = VK_SUCCESS;
     VkSurfaceFormatKHR *surface_format = NULL;
     int sdl_width = 0;
     int sdl_height = 0;
     VkExtent2D size_extents = {0};
 
-    VkSwapchainKHR swapchain = NULL;
-    VkImage *_images = NULL;
-    VkImageView *_image_views = NULL;
+    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
 
     VkImageViewCreateInfo viewInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -49,13 +46,8 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
                 rc = ETHER_ERENDER;
                 goto EXIT;
             }
-            result = vkResetFences(app->device.logical_device, 1, &app->in_flight);
-            if (VK_SUCCESS != result)
-            {
-                ETHER_ELOGV("Failed to reset in flight fence: %s", string_VkResult(result));
-                rc = ETHER_ERENDER;
-                goto EXIT;
-            }
+            // Keep this signaled: ether_render waits on it before submitting
+            // the next frame, and resets it immediately before submission.
         }
 
         // wait for present
@@ -109,7 +101,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
     // when using separate families, we provide this array for CONCURRENT access
     uint32_t concurrent_families[] = {app->device.graphics_family, app->device.present_family};
 
-    // need to re-query the surfac capabilities
+    // need to re-query the surface capabilities
     VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
         .surface = app->vk_surface};
@@ -125,9 +117,18 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
     }
     memcpy(&app->device.surface_capabilities, &surface_capes.surfaceCapabilities, sizeof(VkSurfaceCapabilitiesKHR));
 
+    // ensure it still has the capabilities we need
+    if (!(app->device.surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+        !(app->device.surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+        !(app->device.surface_capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+    {
+        ETHER_ELOG("New surface capabilities missing required features");
+        rc = ETHER_ERENDER;
+        goto EXIT;
+    }
+
     // pick image count
-    uint32_t image_count = 3;         // preferred
-    uint32_t created_image_count = 0; // actual
+    uint32_t image_count = 3; // preferred
 
     if (image_count < app->device.surface_capabilities.minImageCount)
     {
@@ -146,25 +147,90 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         image_count = app->device.surface_capabilities.maxImageCount;
     }
 
-    ETHER_ILOGV("Creating swapchain, requesting %d images", image_count);
+    ETHER_ILOGV("Swapchain requesting %d images", image_count);
 
-    // get surface format
+    do
+    {
+        // refresh supported surface formats
+        if (NULL != app->device.surface_formats)
+        {
+            free(app->device.surface_formats);
+            app->device.surface_formats = NULL;
+            app->device.surface_format_count = 0;
+        }
+
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(app->device.physical_device,
+                                                                          &surfaceInfo,
+                                                                          &app->device.surface_format_count, NULL)))
+        {
+            ETHER_ELOGV("Failed to get physical device surface format count: %s", string_VkResult(result));
+            rc = ETHER_ERENDER;
+            goto EXIT;
+        }
+        app->device.surface_formats = malloc(sizeof(VkSurfaceFormat2KHR) * app->device.surface_format_count);
+        if (NULL == app->device.surface_formats)
+        {
+            ETHER_ELOGV("Failed to allocate surface format list: %s", strerror(errno));
+            rc = errno;
+            goto EXIT;
+        }
+        // The caller initializes the header of every extensible output structure.
+        for (uint32_t si = 0; si < app->device.surface_format_count; si++)
+        {
+            app->device.surface_formats[si] = (VkSurfaceFormat2KHR){
+                .sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR};
+        }
+        if (VK_SUCCESS != (result = vkGetPhysicalDeviceSurfaceFormats2KHR(app->device.physical_device,
+                                                                          &surfaceInfo,
+                                                                          &app->device.surface_format_count,
+                                                                          app->device.surface_formats)))
+        {
+            if (VK_INCOMPLETE == result)
+                continue; // count changed
+            ETHER_ELOGV("Failed to get physical device surface formats: %s", string_VkResult(result));
+            rc = ETHER_ERENDER;
+            goto EXIT;
+        }
+    } while (result == VK_INCOMPLETE);
+
     for (uint32_t si = 0; si < app->device.surface_format_count; si++)
     {
-        // find one in supported formats
+        bool supported_format = false;
         for (uint32_t i = 0; i < sizeof(supported_surface_formats) / sizeof(supported_surface_formats[0]); i++)
         {
-            if (memcmp(&app->device.surface_formats[si].surfaceFormat, supported_surface_formats + i, sizeof(VkSurfaceFormatKHR)) == 0)
+            if (memcmp(&app->device.surface_formats[si].surfaceFormat, &supported_surface_formats[i], sizeof(VkSurfaceFormatKHR)) == 0)
             {
-                surface_format = &app->device.surface_formats[si].surfaceFormat;
-                break;
+
+                // ensure it has the right properties
+                VkFormatProperties src_format_properties;
+                vkGetPhysicalDeviceFormatProperties(
+                    app->device.physical_device,
+                    app->device.surface_formats[si].surfaceFormat.format,
+                    &src_format_properties);
+
+                // Assuming blits and transfer to surface
+                VkFormatFeatureFlags src_required_features =
+                    VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
+                    VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+                    VK_FORMAT_FEATURE_BLIT_DST_BIT;
+
+                if ((src_format_properties.optimalTilingFeatures & src_required_features) == src_required_features)
+                {
+                    ETHER_ILOGV("Choosing surface format %s, color space: %s",
+                                string_VkFormat(supported_surface_formats[i].format),
+                                string_VkColorSpaceKHR(supported_surface_formats[i].colorSpace));
+                    supported_format = true;
+                    surface_format = &app->device.surface_formats[si].surfaceFormat;
+                    break;
+                }
             }
         }
-        if (NULL != surface_format)
+        if (supported_format)
         {
             break;
         }
     }
+
     if (NULL == surface_format)
     {
         ETHER_ELOG("Unable to find any compatible surface formats in device.");
@@ -172,12 +238,16 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         goto EXIT;
     }
 
-    ETHER_ILOGV("Using format:%s, colorspace:%s", string_VkFormat(surface_format->format), string_VkColorSpaceKHR(surface_format->colorSpace));
-
     if (!SDL_GetWindowSizeInPixels(app->sdl_window, &sdl_width, &sdl_height))
     {
         ETHER_ELOGV("Failed to query SDL window size: %s", SDL_GetError());
         rc = ETHER_ESDL_INIT;
+        goto EXIT;
+    }
+    if (sdl_width <= 0 || sdl_height <= 0)
+    {
+        // skip creation this time
+        rc = ETHER_DELAY;
         goto EXIT;
     }
     if (app->device.surface_capabilities.currentExtent.width != UINT32_MAX)
@@ -220,57 +290,70 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
 
         .oldSwapchain = VK_NULL_HANDLE};
 
-    if (VK_SUCCESS != (result = vkCreateSwapchainKHR(app->device.logical_device, &createInfo, NULL, &swapchain)))
+    if (VK_SUCCESS != (result = vkCreateSwapchainKHR(app->device.logical_device, &createInfo, NULL, &app->swapchain)))
     {
         ETHER_ELOGV("Failed to create swapchain: %s", string_VkResult(result));
         rc = ETHER_EVK_INIT;
         goto EXIT;
     }
-    app->swapchain = swapchain;
     ETHER_ILOG("Swapchain created");
 
     // get images and imageviews
-    if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, swapchain, &created_image_count, NULL)))
+    do
     {
-        ETHER_ELOGV("Failed to get swapchain image count: %s", string_VkResult(result));
-        rc = ETHER_EVK_INIT;
-        goto EXIT;
-    }
-    ETHER_ILOGV("Swapchain has %d images", created_image_count);
+        if (NULL != app->images)
+        {
+            free(app->images);
+            app->images = NULL;
+        }
+        app->image_count = 0;
+        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, app->swapchain, &app->image_count, NULL)))
+        {
+            ETHER_ELOGV("Failed to get swapchain image count: %s", string_VkResult(result));
+            rc = ETHER_EVK_INIT;
+            goto EXIT;
+        }
+        ETHER_ILOGV("Swapchain has %d images", app->image_count);
 
-    // allocate the images and image views
-    _images = calloc(created_image_count, sizeof(VkImage));
-    if (NULL == _images)
-    {
-        ETHER_ELOGV("Failed to allocate image list: %s", strerror(errno));
-        rc = errno;
-        goto EXIT;
-    }
+        // allocate the images and image views
+        app->images = calloc(app->image_count, sizeof(VkImage));
+        if (NULL == app->images)
+        {
+            ETHER_ELOGV("Failed to allocate image list: %s", strerror(errno));
+            rc = errno;
+            goto EXIT;
+        }
 
-    if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device, swapchain, &created_image_count, _images)))
-    {
-        ETHER_ELOGV("Failed to get swapchain images: %s", string_VkResult(result));
-        rc = ETHER_EVK_INIT;
-        goto EXIT;
-    }
+        if (VK_SUCCESS != (result = vkGetSwapchainImagesKHR(app->device.logical_device,
+                                                            app->swapchain,
+                                                            &app->image_count,
+                                                            app->images)))
+        {
+            if (VK_INCOMPLETE == result)
+                continue; // count changed
+            ETHER_ELOGV("Failed to get swapchain images: %s", string_VkResult(result));
+            rc = ETHER_EVK_INIT;
+            goto EXIT;
+        }
+    } while (VK_INCOMPLETE == result);
     ETHER_ILOG("Image references retrieved");
 
     // now get image views for each one
-    ETHER_ILOGV("Creating %d ImageViews", created_image_count);
-    _image_views = calloc(created_image_count, sizeof(VkImageView));
-    if (NULL == _image_views)
+    ETHER_ILOGV("Creating %d ImageViews", app->image_count);
+    app->image_views = calloc(app->image_count, sizeof(VkImageView));
+    if (NULL == app->image_views)
     {
         ETHER_ELOGV("Failed to get image views for swapchain: %s", strerror(errno));
         rc = errno;
         goto EXIT;
     }
 
-    for (uint32_t i = 0; i < created_image_count; i++)
+    for (uint32_t i = 0; i < app->image_count; i++)
     {
-        viewInfo.image = _images[i];
+        viewInfo.image = app->images[i];
         viewInfo.format = surface_format->format;
 
-        if (VK_SUCCESS != (result = vkCreateImageView(app->device.logical_device, &viewInfo, NULL, _image_views + i)))
+        if (VK_SUCCESS != (result = vkCreateImageView(app->device.logical_device, &viewInfo, NULL, app->image_views + i)))
         {
             ETHER_ILOGV("Failed to create image view, index %d: %s", i, string_VkResult(result));
             rc = ETHER_EVK_INIT;
@@ -284,7 +367,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
 
     VkSemaphoreCreateInfo semaphoreInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    app->renders_finished = calloc(created_image_count, sizeof(VkSemaphore));
+    app->renders_finished = calloc(app->image_count, sizeof(VkSemaphore));
     if (NULL == app->renders_finished)
     {
         ETHER_ELOGV("Failed to allocate renders_finished list: %s", strerror(errno));
@@ -292,7 +375,7 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         goto EXIT;
     }
     // allocate the renders_finished for every image in swapchain
-    for (uint32_t i = 0; i < created_image_count; i++)
+    for (uint32_t i = 0; i < app->image_count; i++)
     {
         result = vkCreateSemaphore(app->device.logical_device, &semaphoreInfo, NULL, app->renders_finished + i);
         if (VK_SUCCESS != result)
@@ -303,25 +386,12 @@ ether_rc ether_generate_swapchain(ether_app_t *app)
         }
     }
 
-    // all good, assign to app
-    app->image_count = created_image_count;
-    app->images = _images;
-    app->image_views = _image_views;
+    ETHER_ILOG("Swapchain initialized");
 
 EXIT:
     if (ETHER_SUCCESS != rc)
     {
         ether_swapchain_destroy(app);
-        if (NULL != _images)
-        {
-            free(_images);
-            _images = NULL;
-        }
-        if (NULL != _image_views)
-        {
-            free(_image_views);
-            _image_views = NULL;
-        }
     }
     return rc;
 }
@@ -335,6 +405,8 @@ void ether_swapchain_destroy(ether_app_t *app)
         ETHER_ILOG("Destroying render finished semaphore list");
         for (uint32_t i = 0; i < app->image_count; i++)
         {
+            if (VK_NULL_HANDLE == app->renders_finished[i])
+                continue;
             vkDestroySemaphore(app->device.logical_device, app->renders_finished[i], NULL);
         }
         free(app->renders_finished);
@@ -346,6 +418,8 @@ void ether_swapchain_destroy(ether_app_t *app)
         ETHER_ILOG("Destroying image views");
         for (uint32_t i = 0; i < app->image_count; i++)
         {
+            if (VK_NULL_HANDLE == app->image_views[i])
+                continue;
             vkDestroyImageView(app->device.logical_device, app->image_views[i], NULL);
         }
         free(app->image_views);

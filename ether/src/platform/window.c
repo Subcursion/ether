@@ -35,10 +35,9 @@ EXIT:
     return rc;
 }
 
-ether_rc ether_window_destroy(ether_app_t *app)
+void ether_window_destroy(ether_app_t *app)
 {
-    ether_rc rc = ETHER_SUCCESS;
-    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
+    PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), return);
 
     if (NULL != app->sdl_window)
     {
@@ -48,7 +47,4 @@ ether_rc ether_window_destroy(ether_app_t *app)
     }
 
     SDL_Quit();
-
-EXIT:
-    return rc;
 }

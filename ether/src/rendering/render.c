@@ -63,9 +63,6 @@ ether_rc ether_render_init(ether_app_t *app)
 
     VkSemaphoreCreateInfo semaphoreInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    VkFenceCreateInfo fenceInfo = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
 
     ETHER_ILOG("Creating image available semaphore");
     result = vkCreateSemaphore(app->device.logical_device, &semaphoreInfo, NULL, &app->image_available);
@@ -76,6 +73,9 @@ ether_rc ether_render_init(ether_app_t *app)
         goto EXIT;
     }
 
+    VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
     ETHER_ILOG("Creating in flight fence");
     result = vkCreateFence(app->device.logical_device, &fenceInfo, NULL, &app->in_flight);
     if (VK_SUCCESS != result)
@@ -321,17 +321,10 @@ ether_rc ether_render(ether_app_t *app)
         .signalSemaphoreInfoCount = 1,
         .pSignalSemaphoreInfos = &signalInfo};
 
-    // reset right before
-    result = vkResetFences(app->device.logical_device, 1, &app->in_flight);
-    if (VK_SUCCESS != result)
-    {
-        ETHER_ELOGV("Failed to reset fense: %s", string_VkResult(result));
-        rc = ETHER_ERENDER;
-        goto EXIT;
-    }
-
     if (app->present_pending)
     {
+        // if we are rendering normally and present_pending was triggered, wait on it and reset it
+        // so it can be used below
         result = vkWaitForFences(app->device.logical_device, 1, &app->present_fence, VK_TRUE, UINT64_MAX);
         if (VK_SUCCESS != result)
         {
@@ -347,6 +340,15 @@ ether_rc ether_render(ether_app_t *app)
             goto EXIT;
         }
         app->present_pending = false;
+    }
+
+    // reset right before (no other error paths should reset this)
+    result = vkResetFences(app->device.logical_device, 1, &app->in_flight);
+    if (VK_SUCCESS != result)
+    {
+        ETHER_ELOGV("Failed to reset fense: %s", string_VkResult(result));
+        rc = ETHER_ERENDER;
+        goto EXIT;
     }
 
     // submit for processing
@@ -403,16 +405,41 @@ EXIT:
     return rc;
 }
 
-ether_rc ether_render_destroy(ether_app_t *app)
+void ether_render_destroy(ether_app_t *app)
 {
-    ether_rc rc = ETHER_SUCCESS;
-    PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
+    PARAM_CHECK(NULL != app, ETHER_ELOG("app null"), return);
     VkResult result = VK_SUCCESS;
 
-    // wait for GPU work to be completed (sort of, swapchain destroy does more to wait)
+    // and wait for present to be done
+    if (app->present_pending)
+    {
+        // if a present was pending then in flight is also triggered
+        // wait on the in flight for rendering
+        if (VK_NULL_HANDLE != app->in_flight)
+        {
+            ETHER_ILOG("Waiting for in flight fence");
+            result = vkWaitForFences(app->device.logical_device, 1, &app->in_flight, VK_TRUE, UINT64_MAX);
+            if (VK_SUCCESS != result)
+            {
+                ETHER_ELOGV("Failed to wait for in flight fence: %s", string_VkResult(result));
+            }
+            // don't bother resetting it, it's about to be destroyed, also don't quit on error
+        }
+
+        // if we are rendering normally and present_pending was triggered, wait on it and reset it
+        // so it can be used below
+        ETHER_ILOG("Waiting for present fence");
+        result = vkWaitForFences(app->device.logical_device, 1, &app->present_fence, VK_TRUE, UINT64_MAX);
+        if (VK_SUCCESS != result)
+        {
+            ETHER_ELOGV("Failed to wait for present fence: %s", string_VkResult(result));
+        }
+        /// don't bother resetting it, it's about to be destroyed, also don't quit on error
+    }
+
+    // additional safeguard for ensuring the device is idle
     if (VK_NULL_HANDLE != app->device.logical_device)
     {
-
         ETHER_ILOG("Waiting for idle device");
         if (VK_SUCCESS != (result = vkDeviceWaitIdle(app->device.logical_device)))
         {
@@ -463,7 +490,4 @@ ether_rc ether_render_destroy(ether_app_t *app)
         vkDestroyCommandPool(app->device.logical_device, app->command_pool, NULL);
         app->command_pool = VK_NULL_HANDLE;
     }
-
-EXIT:
-    return rc;
 }

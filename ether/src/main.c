@@ -6,7 +6,9 @@
 #include "ether/runtime/runtime_loop.h"
 
 #include <stdio.h>
+#include <errno.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 ether_app_t application = {0};
 
@@ -43,15 +45,18 @@ int main(int argc, char **argv)
 
 CLEANUP:
     ETHER_ILOGV("Ether stopped with status: %s", ether_rc_str(rc));
-    if (ETHER_SUCCESS != (rc = ether_vulkan_destroy(&application)))
+
+    ether_vulkan_destroy(&application);
+    ether_window_destroy(&application);
+
+    if (ETHER_SUCCESS != ether_log_close())
     {
-        // nothing to do
+        // not good.
+        if (ETHER_SUCCESS == rc)
+        {
+            rc = errno;
+        }
     }
 
-    if (ETHER_SUCCESS != (rc = ether_window_destroy(&application)))
-    {
-        // nothing to do
-    }
-
-    return ether_log_close(log_stream);
+    return rc == ETHER_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }

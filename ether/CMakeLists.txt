@@ -10,9 +10,18 @@ file(GLOB_RECURSE ETHER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
-add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
-
 add_executable(ether ${ETHER_SOURCES})
+
+# Keep source paths in logs/debug information independent of the checkout path.
+# MSVC does not accept this GCC/Clang option; unsupported compilers omit it.
+if(NOT MSVC)
+    include(CheckCCompilerFlag)
+    set(ETHER_FILE_PREFIX_MAP "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=")
+    check_c_compiler_flag("${ETHER_FILE_PREFIX_MAP}" ETHER_HAS_FILE_PREFIX_MAP)
+    if(ETHER_HAS_FILE_PREFIX_MAP)
+        target_compile_options(ether PRIVATE "${ETHER_FILE_PREFIX_MAP}")
+    endif()
+endif()
 
 set_target_properties(ether PROPERTIES
     C_STANDARD 17
