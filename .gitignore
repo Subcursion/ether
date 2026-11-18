@@ -62,3 +62,5 @@ dkms.conf
 
 # vscode stuff
 .vscode/settings.json
+
+log.txt
