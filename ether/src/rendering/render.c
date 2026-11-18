@@ -4,10 +4,10 @@
 #include "ether/logging.h"
 #include "ether/rendering/swapchain.h"
 #include "ether/rendering/supported_options.h"
+#include "ether/profiler.h"
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_enum_string_helper.h>
-#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -233,11 +233,18 @@ ether_rc ether_render(ether_app_t *app)
     VkResult result = VK_SUCCESS;
     uint32_t image_index = 0;
 
+    PROFILER_GET_TIMER(ether_generate_swapchain);
+    PROFILER_GET_TIMER(vkWaitForFences);
+    PROFILER_GET_TIMER(vkAcquireNextImageKHR);
+    PROFILER_GET_TIMER(ether_render_record);
+    PROFILER_GET_TIMER(submit_frame);
+
     // rebuild swapchain if need be
     if (app->pending_swapchain_rebuild)
     {
-
+        PROFILER_START_TIMER(ether_generate_swapchain_timer);
         rc = ether_generate_swapchain(app);
+        PROFILER_END_TIMER();
         if (ETHER_SUCCESS != rc)
         {
             goto EXIT;
@@ -246,7 +253,9 @@ ether_rc ether_render(ether_app_t *app)
         app->pending_swapchain_rebuild = false;
     }
 
+    PROFILER_START_TIMER(vkWaitForFences_timer);
     result = vkWaitForFences(app->device.logical_device, 1, &app->in_flight, VK_TRUE, UINT64_MAX);
+    PROFILER_END_TIMER();
     if (VK_SUCCESS != result)
     {
         ETHER_ELOGV("Failed to wait for in flight fence: %s", string_VkResult(result));
@@ -254,12 +263,14 @@ ether_rc ether_render(ether_app_t *app)
         goto EXIT;
     }
 
+    PROFILER_START_TIMER(vkAcquireNextImageKHR_timer);
     result = vkAcquireNextImageKHR(app->device.logical_device,
                                    app->swapchain,
                                    UINT64_MAX,
                                    app->image_available,
                                    VK_NULL_HANDLE,
                                    &image_index);
+    PROFILER_END_TIMER();
     if (VK_SUCCESS != result)
     {
         if (VK_ERROR_OUT_OF_DATE_KHR == result)
@@ -279,9 +290,11 @@ ether_rc ether_render(ether_app_t *app)
         }
     }
 
+    PROFILER_START_TIMER(ether_render_record_timer);
     result = vkResetCommandBuffer(app->command_buffer, 0);
     if (VK_SUCCESS != result)
     {
+        PROFILER_END_TIMER();
         ETHER_ELOGV("Failed to reset command buffer: %s", string_VkResult(result));
         rc = ETHER_ERENDER;
         goto EXIT;
@@ -289,10 +302,13 @@ ether_rc ether_render(ether_app_t *app)
 
     // record commands
     rc = ether_render_record(app, image_index);
+    PROFILER_END_TIMER();
     if (ETHER_SUCCESS != rc)
     {
         goto EXIT;
     }
+
+    PROFILER_START_TIMER(submit_frame_timer);
 
     // wait for queue to process to present
     VkSemaphoreSubmitInfo waitInfo = {
@@ -402,6 +418,10 @@ ether_rc ether_render(ether_app_t *app)
     app->present_pending = true;
 
 EXIT:
+    if (submit_frame_timer.started)
+    {
+        PROFILER_END_TIMER();
+    }
     return rc;
 }
 

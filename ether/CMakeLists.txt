@@ -45,6 +45,7 @@ target_include_directories(ether SYSTEM PRIVATE
 )
 
 target_compile_definitions(ether PRIVATE
+    _POSIX_C_SOURCE=199309L
     CGLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 

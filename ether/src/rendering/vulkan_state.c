@@ -5,6 +5,8 @@
 #include "ether/rendering/swapchain.h"
 #include "ether/rendering/render.h"
 
+#include "ether/profiler.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
@@ -97,10 +99,15 @@ ether_rc ether_vulkan_init(ether_app_t *app)
     ether_device_t device = {0};
 
     // pick the best device
+    PROFILER_GET_TIMER(ether_pick_device);
+    PROFILER_START_TIMER(ether_pick_device_timer);
+
     if (ETHER_SUCCESS != (rc = ether_pick_device(app, &device)))
     {
+        PROFILER_END_TIMER();
         goto EXIT;
     }
+    PROFILER_END_TIMER();
 
     memcpy(&app->device, &device, sizeof(device));
 
@@ -108,7 +115,10 @@ ether_rc ether_vulkan_init(ether_app_t *app)
     app->pending_swapchain_rebuild = true;
 
     // init renderer
+    PROFILER_GET_TIMER(ether_render_init);
+    PROFILER_START_TIMER(ether_render_init_timer);
     rc = ether_render_init(app);
+    PROFILER_END_TIMER();
     if (ETHER_SUCCESS != rc)
     {
         goto EXIT;
