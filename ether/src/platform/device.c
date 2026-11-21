@@ -564,12 +564,9 @@ ether_rc ether_pick_device(ether_app_t *app, ether_device_t *device)
     } while (VK_INCOMPLETE == vk_result);
 
     uint32_t di = 0;
-    PROFILER_GET_TIMER(device_compatibility);
     for (; di < deviceCount; di++)
     {
-        PROFILER_START_TIMER(device_compatibility_timer);
         get_device_compatibility(app, devices[di], ether_devices + di);
-        PROFILER_END_TIMER();
     }
 
     // assign it to the application
