@@ -27,9 +27,6 @@ set_target_properties(ether PROPERTIES
     C_STANDARD 17
     C_STANDARD_REQUIRED YES
     C_EXTENSIONS NO
-    # The empty generator expression prevents Debug/Release subdirectories
-    # with multi-configuration generators. The justfile sets this to build/.
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<0:>"
 )
 
 target_include_directories(ether
@@ -37,7 +34,18 @@ target_include_directories(ether
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/inc"
 )
 
-target_link_libraries(ether PRIVATE Vulkan::Vulkan SDL3::SDL3)
+target_link_libraries(ether PRIVATE Vulkan::Vulkan SDL3::SDL3 ${CMAKE_DL_LIBS})
+set_target_properties(ether PROPERTIES ENABLE_EXPORTS ON)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_path(ETHER_LIBDW_INCLUDE_DIR elfutils/libdwfl.h)
+    find_library(ETHER_LIBDW_LIBRARY dw)
+    if(ETHER_LIBDW_INCLUDE_DIR AND ETHER_LIBDW_LIBRARY)
+        target_include_directories(ether SYSTEM PRIVATE "${ETHER_LIBDW_INCLUDE_DIR}")
+        target_link_libraries(ether PRIVATE "${ETHER_LIBDW_LIBRARY}")
+        target_compile_definitions(ether PRIVATE ETHER_PROFILER_LIBDW)
+    endif()
+endif()
 
 # add cglm
 target_include_directories(ether SYSTEM PRIVATE
@@ -45,6 +53,8 @@ target_include_directories(ether SYSTEM PRIVATE
 )
 
 target_compile_definitions(ether PRIVATE
+    _POSIX_C_SOURCE=199309L
+    _GNU_SOURCE
     CGLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 
@@ -56,7 +66,8 @@ endif()
 if(MSVC)
     target_compile_options(ether PRIVATE /Wall /WX)
 elseif(CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
-    target_compile_options(ether PRIVATE -Weverything -Werror -pedantic-errors)
+    target_compile_options(ether PRIVATE -Weverything -Werror -pedantic-errors
+    -finstrument-functions -finstrument-functions-exclude-file-list=vk_enum_string_helper.h)
 elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     # GCC has no equivalent to Clang's -Weverything.
     target_compile_options(ether PRIVATE
@@ -66,6 +77,8 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         -Wcast-align=strict -Wcast-qual -Wwrite-strings -Wundef
         -Wdouble-promotion -Wnull-dereference -Wvla
         -Wswitch-enum -Wswitch-default -Wredundant-decls
+        -finstrument-functions
+        -finstrument-functions-exclude-file-list=vk_enum_string_helper.h
     )
 else()
     message(FATAL_ERROR "Strict warning flags are not configured for ${CMAKE_C_COMPILER_ID}")

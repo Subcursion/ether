@@ -1,6 +1,7 @@
 #include "ether/runtime/runtime_loop.h"
 #include "ether/rc.h"
 #include "ether/rendering/render.h"
+#include "ether/profiler.h"
 
 #include <SDL3/SDL.h>
 #include <time.h>
@@ -12,9 +13,12 @@ ether_rc ether_engine_loop(ether_app_t *app)
     PARAM_CHECK(NULL != app, rc = ETHER_EPARAM, goto EXIT);
 
     ETHER_ILOG("Entering main engine loop");
+    profiler_frame_checkpoint();
 
     while (!app->should_quit)
     {
+        profiler_frame_begin();
+
         rc = ETHER_SUCCESS;
         // poll for events
         while (SDL_PollEvent(&app->event))
@@ -37,7 +41,7 @@ ether_rc ether_engine_loop(ether_app_t *app)
         }
 
         if (app->should_quit)
-            break;
+            goto RESTART_LOOP; // will exit though
 
         // update scene state
 
@@ -49,11 +53,16 @@ ether_rc ether_engine_loop(ether_app_t *app)
             {
                 // sleep and try again next loop
                 sleep(1); // TODO[future] do a more precise sleep
-                continue;
+                goto RESTART_LOOP;
             }
             app->should_quit = true;
-            break;
+            goto RESTART_LOOP;
         }
+
+    RESTART_LOOP:
+        profiler_frame_end();
+
+        continue;
     }
 
     ETHER_ILOG("Main engine loop exited");

@@ -1,6 +1,7 @@
 #include "ether/platform/window.h"
 #include "ether/rc.h"
 #include "ether/logging.h"
+#include "ether/profiler.h"
 
 #include <SDL3/SDL.h>
 

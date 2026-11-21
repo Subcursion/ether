@@ -5,6 +5,10 @@
 #include "ether/rendering/vulkan_state.h"
 #include "ether/runtime/runtime_loop.h"
 
+#include "ether/ansi.h"
+#include "ether/profiler.h"
+
+#include <stdbool.h>
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
@@ -17,22 +21,25 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+    profiler_start();
+
     ether_rc rc = ETHER_SUCCESS;
 
-    FILE *log_stream = fopen("./log.txt", "a+");
-    if (NULL == log_stream)
+    bool terminal_output = isatty(STDOUT_FILENO) != 0;
+    if (terminal_output)
     {
-        fprintf(stderr, "Failed to open log `%s` for writing.\n", "./log.txt");
-        return -1;
+        fputs(CSI_HIDE_CURSOR, stdout);
+        fflush(stdout);
     }
 
-    ether_log_init(log_stream, ETHER_LOG_INFO);
+    rc = ether_log_init("./log.txt", ETHER_LOG_INFO);
+    if (ETHER_SUCCESS != rc)
+        goto RESTORE_DISPLAY;
 
     if (ETHER_SUCCESS != (rc = ether_window_init(&application, "Ether Tracer", 800, 600)))
     {
         goto CLEANUP;
     }
-
     if (ETHER_SUCCESS != (rc = ether_vulkan_init(&application)))
     {
         goto CLEANUP;
@@ -56,6 +63,14 @@ CLEANUP:
         {
             rc = errno;
         }
+    }
+
+RESTORE_DISPLAY:
+    profiler_finish();
+    if (terminal_output)
+    {
+        fputs(CSI_SHOW_CURSOR, stdout);
+        fflush(stdout);
     }
 
     return rc == ETHER_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;

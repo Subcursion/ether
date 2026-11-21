@@ -7,7 +7,6 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_enum_string_helper.h>
-#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -236,7 +235,6 @@ ether_rc ether_render(ether_app_t *app)
     // rebuild swapchain if need be
     if (app->pending_swapchain_rebuild)
     {
-
         rc = ether_generate_swapchain(app);
         if (ETHER_SUCCESS != rc)
         {

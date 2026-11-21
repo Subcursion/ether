@@ -6,7 +6,7 @@ set default-list := true
 configure BUILD_TYPE=default_build_type:
     cmake -S ether -B build -DCMAKE_BUILD_TYPE={{BUILD_TYPE}}
 
-build: configure
+build: 
     cmake --build build
 
 run: build configure

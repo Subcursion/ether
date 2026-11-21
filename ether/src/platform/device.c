@@ -4,6 +4,7 @@
 #include "ether/logging.h"
 #include "ether/rendering/vulkan_state.h"
 #include "ether/rendering/supported_options.h"
+#include "ether/profiler.h"
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_enum_string_helper.h>

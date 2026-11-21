@@ -5,6 +5,8 @@
 #include "ether/rendering/swapchain.h"
 #include "ether/rendering/render.h"
 
+#include "ether/profiler.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
@@ -101,7 +103,6 @@ ether_rc ether_vulkan_init(ether_app_t *app)
     {
         goto EXIT;
     }
-
     memcpy(&app->device, &device, sizeof(device));
 
     // so they get created on start
